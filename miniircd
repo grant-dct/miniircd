@@ -28,6 +28,7 @@ import string
 import sys
 import tempfile
 import time
+import jwt
 
 from argparse import ArgumentParser, Namespace
 from datetime import datetime
@@ -143,6 +144,8 @@ class Client:
         self.__sent_ping = False
         if self.server.password:
             self.__handle_command = self.__pass_handler
+        elif self.server.token_key:
+            self.__handle_command = self.__token_handler
         else:
             self.__handle_command = self.__registration_handler
 
@@ -199,6 +202,48 @@ class Client:
                 self.__handle_command = self.__registration_handler
             else:
                 self.reply(b"464 :Password incorrect")
+        elif command == b"QUIT":
+            self.disconnect("Client quit")
+
+    def __token_handler(
+        self, command: bytes, arguments: Sequence[bytes]
+    ) -> None:
+        server = self.server
+        if command == b"TOKEN":
+            if len(arguments) == 0:
+                self.reply_461(b"TOKEN")
+            else:
+                print("token_key:", server.token_key)
+                token = arguments[0]
+                try:
+                    token_data = jwt.decode(token, server.token_key.encode(), algorithms=["HS256"])
+                    nick = token_data['email'].encode()
+                    if server.get_client(nick):
+                        self.reply(b"433 * %s :Nickname is already in use" % nick)
+                    else:
+                        self.user = nick
+                        self.realname = token_data['display_name'].encode()
+                        self.nickname = token_data['email'].encode()
+
+                        self.reply(b"001 %s :Hi, welcome to IRC" % self.nickname)
+                        self.reply(
+                            b"002 %s :Your host is %s, running version miniircd-%s"
+                            % (self.nickname, server.name, VERSION.encode())
+                        )
+                        self.reply(
+                            b"003 %s :This server was created sometime" % self.nickname
+                        )
+                        self.reply(
+                            b"004 %s %s miniircd-%s o o"
+                            % (self.nickname, server.name, VERSION.encode())
+                        )
+                        self.send_lusers()
+                        self.send_motd()
+                        self.__handle_command = self.__command_handler
+
+                except Exception as e:
+                    self.reply(b"464 :Password incorrect")
+
         elif command == b"QUIT":
             self.disconnect("Client quit")
 
@@ -805,6 +850,7 @@ class Server:
         self.logger: Optional[logging.Logger] = None
         self.cloak = args.cloak
         self.name: bytes
+        self.token_key = args.token_key
 
         if args.password_file:
             with open(args.password_file, "r") as fp:
@@ -1150,6 +1196,9 @@ def main() -> None:
     )
     ap.add_argument(
         "--cloak", metavar="X", help="report X as the host for all clients"
+    )
+    ap.add_argument(
+        "--token-key", help="Use a token for the password. Token must be signed with this key"
     )
     if os.name == "posix":
         ap.add_argument(

@@ -213,7 +213,6 @@ class Client:
             if len(arguments) == 0:
                 self.reply_461(b"TOKEN")
             else:
-                print("token_key:", server.token_key)
                 token = arguments[0]
                 try:
                     token_data = jwt.decode(token, server.token_key.encode(), algorithms=["HS256"])
